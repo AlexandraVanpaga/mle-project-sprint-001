@@ -1,8 +1,6 @@
-# dags/housing.py
-
-
 import pendulum
 from airflow.decorators import dag, task
+from airflow.utils.trigger_rule import TriggerRule
 from sqlalchemy import Table, MetaData, Column, Integer, Boolean, Float, UniqueConstraint
 import pandas as pd
 from airflow.providers.postgres.hooks.postgres import PostgresHook
@@ -17,12 +15,10 @@ from airflow.operators.python import get_current_context
 )
 def prepare_housing_dataset():
 
-
     @task()
     def create_table():
         hook = PostgresHook('destination_db')
         engine = hook.get_sqlalchemy_engine()
-
 
         metadata = MetaData()
         df_housing = Table(
@@ -47,12 +43,9 @@ def prepare_housing_dataset():
             Column('studio', Boolean),
             Column('total_area', Float),
             Column('price', Float),
-
-
             UniqueConstraint('flat_id', name='uq_flat_id')
         )
         metadata.create_all(engine)
-
 
     @task()
     def extract():
@@ -85,46 +78,42 @@ def prepare_housing_dataset():
         conn.close()
         return data
 
-
     @task()
     def transform(data: pd.DataFrame):
-        data['target'] = data['price']  # создаём целевой столбец для модели
         return data
-
 
     @task()
     def load(data: pd.DataFrame):
         hook = PostgresHook('destination_db')
-
-
-        # Чтобы не передавать 'target' в таблицу, уберём его из колонок
-        cols_to_insert = [col for col in data.columns if col != 'target']
-
-
         hook.insert_rows(
             table="df_housing",
-            rows=data[cols_to_insert].values.tolist(),
-            target_fields=cols_to_insert,
+            rows=data.values.tolist(),
+            target_fields=data.columns.tolist(),
             replace=True,
             replace_index=['flat_id']
         )
 
-
-    @task()
-    def send_message_telegram():
+    @task(trigger_rule=TriggerRule.ALL_SUCCESS)
+    def send_success_message():
         context = get_current_context()
-        from steps.messages import send_telegram_success_message, send_telegram_failure_message
-        try:
-            send_telegram_success_message(context)
-        except Exception:
-            send_telegram_failure_message(context)
+        from steps.messages import send_telegram_success_message
+        send_telegram_success_message(context)
 
+    @task(trigger_rule=TriggerRule.ONE_FAILED)
+    def send_failure_message():
+        context = get_current_context()
+        from steps.messages import send_telegram_failure_message
+        send_telegram_failure_message(context)
 
-    create_table()
-    data = extract()
-    transformed_data = transform(data)
-    load(transformed_data)
-    send_message_telegram()
+    # Основной pipeline
+    created = create_table()
+    extracted = extract()
+    transformed = transform(extracted)
+    loaded = load(transformed)
+
+    # Уведомления
+    [created, extracted, transformed, loaded] >> send_success_message()
+    [created, extracted, transformed, loaded] >> send_failure_message()
 
 
 prepare_housing_dataset()

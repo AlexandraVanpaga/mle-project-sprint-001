@@ -5,11 +5,12 @@ from sqlalchemy import Table, MetaData, Column, Integer, Boolean, Float, UniqueC
 import pandas as pd
 import numpy as np
 from airflow.providers.postgres.hooks.postgres import PostgresHook
-from airflow.operators.python import get_current_context
+from steps.messages import send_telegram_success_message, send_telegram_failure_message
 
 # Центр Москвы
 moscow_lat = 55.7539
 moscow_lon = 37.6208
+
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371  # км
@@ -17,9 +18,10 @@ def haversine(lat1, lon1, lat2, lon2):
     lat2_rad, lon2_rad = np.radians(lat2), np.radians(lon2)
     dlat = lat2_rad - lat1_rad
     dlon = lon2_rad - lon1_rad
-    a = np.sin(dlat / 2)**2 + np.cos(lat1_rad) * np.cos(lat2_rad) * np.sin(dlon / 2)**2
+    a = np.sin(dlat / 2) ** 2 + np.cos(lat1_rad) * np.cos(lat2_rad) * np.sin(dlon / 2) ** 2
     c = 2 * np.arcsin(np.sqrt(a))
     return R * c
+
 
 def fill_zeros_by_group_then_global(df, group_col, fill_cols):
     for col in fill_cols:
@@ -27,6 +29,7 @@ def fill_zeros_by_group_then_global(df, group_col, fill_cols):
         df[col] = df.groupby(group_col)[col].transform(lambda x: x.fillna(x.mean()))
         df[col] = df[col].fillna(df[col].mean())
     return df
+
 
 def manual_filter(df: pd.DataFrame) -> pd.DataFrame:
     return df[
@@ -44,11 +47,14 @@ def manual_filter(df: pd.DataFrame) -> pd.DataFrame:
         (df["build_year"] >= 1900) & (df["build_year"] <= 2025)
     ]
 
+
 @dag(
     schedule='@once',
     start_date=pendulum.datetime(2023, 1, 1, tz="UTC"),
     catchup=False,
-    tags=["ETL"]
+    tags=["ETL"],
+    on_success_callback=send_telegram_success_message,
+    on_failure_callback=send_telegram_failure_message
 )
 def prepare_clean_housing_dataset():
 
@@ -84,7 +90,6 @@ def prepare_clean_housing_dataset():
             UniqueConstraint('flat_id', name='uq_flat_id_clean')
         )
 
-        # создаёт таблицу, только если её ещё нет
         metadata.create_all(engine, checkfirst=True)
 
     @task()
@@ -120,24 +125,26 @@ def prepare_clean_housing_dataset():
 
     @task()
     def transform(df: pd.DataFrame):
-        # Заполняем нули в living_area и kitchen_area
-        fill_cols = ['living_area', 'kitchen_area']
-        df = fill_zeros_by_group_then_global(df, 'building_id', fill_cols)
+        # Считаем расстояние от центра Москвы
+        df['distance_from_moscow_center'] = haversine(
+            df['latitude'], df['longitude'],
+            moscow_lat, moscow_lon
+        )
 
-        # Удаляем дубликаты
-        df_no_id = df.drop(columns=['flat_id', 'building_id'])  # исключаем id для поиска дубликатов
+        # Фильтруем по заданным условиям
+        df_filtered = manual_filter(df)
+
+        # Заполняем нули по группам и глобально
+        fill_cols = ['living_area', 'kitchen_area']
+        df_filled = fill_zeros_by_group_then_global(df_filtered, 'building_id', fill_cols)
+
+        # Удаляем дубликаты без учета id
+        df_no_id = df_filled.drop(columns=['flat_id', 'building_id'])
         duplicated_mask = df_no_id.duplicated(keep='first')
         duplicate_indices = df_no_id[duplicated_mask].index
-        df_cleaned = df.drop(index=duplicate_indices).reset_index(drop=True)
+        df_cleaned = df_filled.drop(index=duplicate_indices).reset_index(drop=True)
 
-        # Считаем расстояние от центра Москвы
-        df_cleaned['distance_from_moscow_center'] = haversine(
-            df_cleaned['latitude'], df_cleaned['longitude'], moscow_lat, moscow_lon)
-
-        # Ручная фильтрация
-        df_manual = manual_filter(df_cleaned)
-
-        return df_manual
+        return df_cleaned
 
     @task()
     def load(data: pd.DataFrame):
@@ -150,25 +157,12 @@ def prepare_clean_housing_dataset():
             replace_index=['flat_id']
         )
 
-    @task(trigger_rule=TriggerRule.ALL_SUCCESS)
-    def send_success_message():
-        context = get_current_context()
-        from steps.messages import send_telegram_success_message
-        send_telegram_success_message(context)
-
-    @task(trigger_rule=TriggerRule.ONE_FAILED)
-    def send_failure_message():
-        context = get_current_context()
-        from steps.messages import send_telegram_failure_message
-        send_telegram_failure_message(context)
-
     created = create_table()
     extracted = extract()
     transformed = transform(extracted)
     loaded = load(transformed)
 
-    [created, extracted, transformed, loaded] >> send_success_message()
-    [created, extracted, transformed, loaded] >> send_failure_message()
+    created >> extracted >> transformed >> loaded
 
 
 prepare_clean_housing_dataset()

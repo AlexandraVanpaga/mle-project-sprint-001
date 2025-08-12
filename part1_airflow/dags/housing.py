@@ -1,17 +1,18 @@
 import pendulum
 from airflow.decorators import dag, task
-from airflow.utils.trigger_rule import TriggerRule
 from sqlalchemy import Table, MetaData, Column, Integer, Boolean, Float, UniqueConstraint
 import pandas as pd
 from airflow.providers.postgres.hooks.postgres import PostgresHook
-from airflow.operators.python import get_current_context
+from steps.messages import send_telegram_success_message, send_telegram_failure_message
 
 
 @dag(
     schedule='@once',
     start_date=pendulum.datetime(2023, 1, 1, tz="UTC"),
     catchup=False,
-    tags=["ETL"]
+    tags=["ETL"],
+    on_success_callback=send_telegram_success_message,
+    on_failure_callback=send_telegram_failure_message
 )
 def prepare_housing_dataset():
 
@@ -80,6 +81,7 @@ def prepare_housing_dataset():
 
     @task()
     def transform(data: pd.DataFrame):
+        # Здесь можно добавить очистку, фильтрацию или фичи, но пока не будем
         return data
 
     @task()
@@ -93,27 +95,12 @@ def prepare_housing_dataset():
             replace_index=['flat_id']
         )
 
-    @task(trigger_rule=TriggerRule.ALL_SUCCESS)
-    def send_success_message():
-        context = get_current_context()
-        from steps.messages import send_telegram_success_message
-        send_telegram_success_message(context)
-
-    @task(trigger_rule=TriggerRule.ONE_FAILED)
-    def send_failure_message():
-        context = get_current_context()
-        from steps.messages import send_telegram_failure_message
-        send_telegram_failure_message(context)
-
-    # Основной pipeline
     created = create_table()
     extracted = extract()
     transformed = transform(extracted)
     loaded = load(transformed)
 
-    # Уведомления
-    [created, extracted, transformed, loaded] >> send_success_message()
-    [created, extracted, transformed, loaded] >> send_failure_message()
+    created >> extracted >> transformed >> loaded
 
 
 prepare_housing_dataset()

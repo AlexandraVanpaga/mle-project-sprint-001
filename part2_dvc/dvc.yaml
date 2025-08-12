@@ -1,32 +1,33 @@
-# dvc.yaml
 stages:
   get_data:
-    cmd: python scripts/data.py
+    cmd: python3 scripts/data.py
     deps:
       - scripts/data.py
     params:
       - index_col
     outs:
       - data/initial_data.csv
+
   fit_model:
-    cmd: python scripts/fit.py
+    cmd: python3 scripts/fit.py
     deps:
       - data/initial_data.csv
       - scripts/fit.py
     params:
-      - index_col
-      - target_col
-      - one_hot_drop
-      - auto_class_weights
+      - index_col        
+      - target_col       
+      - model_params  
     outs:
-      - models/fitted_model.pkl
+      - models/fitted_model.pkl   
+
   evaluate_model:
-    cmd: python scripts/evaluate.py
+    cmd: python3 scripts/evaluate.py
     deps:
       - models/fitted_model.pkl
       - scripts/evaluate.py
+      - data/initial_data.csv
     params:
-      - index_col
+      - index_col        
       - target_col
       - n_splits
       - n_jobs

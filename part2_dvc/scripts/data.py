@@ -32,7 +32,7 @@ def get_data():
 
     # 3.3 — основная логика
     conn = create_connection()
-    data = pd.read_sql('select * from clean_housing', conn, index_col=params['index_col'])
+    data = pd.read_sql('select * from clean_housing_db', conn, index_col=params['index_col'])
     conn.dispose()
 
     # 3.4 — сохранение результата шага

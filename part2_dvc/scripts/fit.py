@@ -1,58 +1,58 @@
-# scripts/fit.py
-
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from category_encoders import CatBoostEncoder
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from catboost import CatBoostClassifier
+from sklearn.preprocessing import StandardScaler, FunctionTransformer
+from sklearn.ensemble import RandomForestRegressor
 import yaml
 import os
 import joblib
+import numpy as np
 
-# обучение модели
+def bool_to_int(X):
+    return X.astype(int)
+
 def fit_model():
-    # Прочитайте файл с гиперпараметрами params.yaml
+    # Читаем параметры
     with open('params.yaml', 'r') as fd:
         params = yaml.safe_load(fd)
-        
-    # Загрузите результат предыдущего шага: initial_data.csv
+
+    # Загружаем данные
     data = pd.read_csv('data/initial_data.csv')
 
-    # Основная логика обучения модели
-    cat_features = data.select_dtypes(include='object')
-    potential_binary_features = cat_features.nunique() == 2
+    # Определяем булевые и числовые колонки (пример, адаптируй под свои)
+    bool_cols = ['has_elevator', 'is_apartment']
+    num_cols = [col for col in data.columns if col not in bool_cols + [params['target_col']]]
 
-    binary_cat_features = cat_features[potential_binary_features[potential_binary_features].index]
-    other_cat_features = cat_features[potential_binary_features[~potential_binary_features].index]
-    num_features = data.select_dtypes(include='float')
-
+    # Препроцессор
     preprocessor = ColumnTransformer(
-        [
-            ('binary', OneHotEncoder(drop='if_binary'), binary_cat_features.columns.tolist()),
-            ('cat', CatBoostEncoder(return_df=False), other_cat_features.columns.tolist()),
-            ('num', StandardScaler(), num_features.columns.tolist())
+        transformers=[
+            ('bool', FunctionTransformer(bool_to_int), bool_cols),
+            ('num', StandardScaler(), num_cols)
         ],
         remainder='drop',
         verbose_feature_names_out=False
     )
 
-    model = CatBoostClassifier(auto_class_weights='Balanced')
+    # Разделяем признаки и таргет
+    X = data[bool_cols + num_cols]
+    y = np.log1p(data[params['target_col']])  # Логарифмируем таргет
 
-    pipeline = Pipeline(
-        [
-            ('preprocessor', preprocessor),
-            ('model', model)
-        ]
-    )
+    # Модель с параметрами из YAML
+    model_params = params.get('model_params', {})
+    model = RandomForestRegressor(**model_params)
 
-    pipeline.fit(data, data['target']) 
+    # Пайплайн
+    pipeline = Pipeline([
+        ('preprocessor', preprocessor),
+        ('regressor', model)
+    ])
 
-    # Сохраните обученную модель в models/fitted_model.pkl
-    os.makedirs('models', exist_ok=True)  # создание директории, если её ещё нет
-    with open('models/fitted_model.pkl', 'wb') as fd:
-        joblib.dump(pipeline, fd)  # сохраняем именно pipeline
+    # Обучаем
+    pipeline.fit(X, y)
 
-# Защищённый вызов
+    # Сохраняем модель
+    os.makedirs('models', exist_ok=True)
+    joblib.dump(pipeline, 'models/fitted_model.pkl')
+
 if __name__ == '__main__':
     fit_model()

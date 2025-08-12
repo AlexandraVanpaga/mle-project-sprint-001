@@ -1,0 +1,74 @@
+schema: '2.0'
+stages:
+  get_data:
+    cmd: python3 scripts/data.py
+    deps:
+    - path: scripts/data.py
+      hash: md5
+      md5: 79d474f54a33ea0a1647777147ce6ffd
+      size: 1494
+    params:
+      params.yaml:
+        index_col: flat_id
+    outs:
+    - path: data/initial_data.csv
+      hash: md5
+      md5: ed938e45b22fdbb5a5c4ce02a4c0a871
+      size: 17141385
+  fit_model:
+    cmd: python3 scripts/fit.py
+    deps:
+    - path: data/initial_data.csv
+      hash: md5
+      md5: ed938e45b22fdbb5a5c4ce02a4c0a871
+      size: 17141385
+    - path: scripts/fit.py
+      hash: md5
+      md5: 00d6bc276f8b262d47c0263d921f6fc2
+      size: 1795
+    params:
+      params.yaml:
+        index_col: flat_id
+        model_params:
+          n_estimators: 150
+          min_samples_split: 2
+          min_samples_leaf: 1
+          max_features: sqrt
+          max_depth: 20
+          random_state: 42
+        target_col: price
+    outs:
+    - path: models/fitted_model.pkl
+      hash: md5
+      md5: d5d16265cfe209537a870b9435c76d4f
+      size: 592228935
+  evaluate_model:
+    cmd: python3 scripts/evaluate.py
+    deps:
+    - path: data/initial_data.csv
+      hash: md5
+      md5: ed938e45b22fdbb5a5c4ce02a4c0a871
+      size: 17141385
+    - path: models/fitted_model.pkl
+      hash: md5
+      md5: d5d16265cfe209537a870b9435c76d4f
+      size: 592228935
+    - path: scripts/evaluate.py
+      hash: md5
+      md5: bbd7bfe69d0138afcb7df08d4a4c483d
+      size: 2544
+    params:
+      params.yaml:
+        index_col: flat_id
+        metrics:
+        - rmse
+        - mae
+        - r2
+        n_jobs: 1
+        n_splits: 3
+        target_col: price
+    outs:
+    - path: cv_results/cv_res.json
+      hash: md5
+      md5: 040be04f0be89a1eb36abce78e3e10cd
+      size: 62

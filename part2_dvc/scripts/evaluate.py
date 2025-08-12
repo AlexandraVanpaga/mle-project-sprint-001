@@ -41,7 +41,7 @@ def evaluate_model():
     # Настраиваем кросс-валидацию
     cv_strategy = KFold(n_splits=params['n_splits'], shuffle=True, random_state=42)
 
-    # Объявляем метрики с преобразованием обратно в реальный масштаб
+    # Объявляем метрики с преобразованием обратно в реальный масштаб - рубли
     scoring = {
         'rmse': make_scorer(rmse_exp, greater_is_better=False),
         'mae': make_scorer(mae_exp, greater_is_better=False),
@@ -58,7 +58,7 @@ def evaluate_model():
         return_train_score=False
     )
 
-    # Усредняем и инвертируем знаки для RMSE и MAE (т.к. greater_is_better=False)
+    # Усредняем и инвертируем знаки для RMSE и MAE
     results = {
         'rmse': -cv_results['test_rmse'].mean(),
         'mae': -cv_results['test_mae'].mean(),
